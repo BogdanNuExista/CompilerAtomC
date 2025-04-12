@@ -69,7 +69,7 @@ bool varDef(){
             if(consume(SEMICOLON)){
                 return true;
             }
-            tkerr("missing ;");
+            tkerr("missing ; after variable declaration");
         }
         
         // pentru ca structDef sa fie corect, ne intoarcem la inceputul lui varDef
@@ -94,9 +94,9 @@ bool structDef(){
                     if(consume(SEMICOLON)){
                         return true;
                     }
-                    tkerr("missing ;");
+                    tkerr("missing ; after struct definition");
                 }
-                tkerr("missing }");
+                tkerr("missing } after struct body");
             } 
             // Daca nu are LACC poate fi doar declarare
             else {
@@ -236,11 +236,29 @@ bool exprAdd(){
 bool exprRel(){
     if(exprAdd()){
         for(;;){
-            if(consume(LESS) || consume(LESSEQ) || consume(GREATER) || consume(GREATEREQ)){
+            if(consume(LESS)){
                 if(exprAdd()){
-                    // continue the loop - it's a recursive rule
+                    // continue the loop
                 }else{
-                    tkerr("invalid relational expression");
+                    tkerr("invalid relational expression after '<'");
+                }
+            }else if(consume(LESSEQ)){
+                if(exprAdd()){
+                    // continue the loop
+                }else{
+                    tkerr("invalid relational expression after '<='");
+                }
+            }else if(consume(GREATER)){
+                if(exprAdd()){
+                    // continue the loop
+                }else{
+                    tkerr("invalid relational expression after '>'");
+                }
+            }else if(consume(GREATEREQ)){
+                if(exprAdd()){
+                    // continue the loop
+                }else{
+                    tkerr("invalid relational expression after '>='");
                 }
             }else{
                 break;
@@ -255,11 +273,17 @@ bool exprRel(){
 bool exprEq(){
     if(exprRel()){
         for(;;){
-            if(consume(EQUAL) || consume(NOTEQ)){
+            if(consume(EQUAL)){
                 if(exprRel()){
                     // continue the loop - it's a recursive rule
                 }else{
-                    tkerr("invalid equality expression");
+                    tkerr("invalid equality expression after '=='");
+                }
+            }else if(consume(NOTEQ)){
+                if(exprRel()){
+                    // continue the loop - it's a recursive rule
+                }else{
+                    tkerr("invalid equality expression after '!='");
                 }
             }else{
                 break;

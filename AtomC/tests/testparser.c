@@ -41,6 +41,11 @@ void main() {
         i = i / 2;
     }
 
+    if(i==10)
+        testStruct();
+    if(i!=10)
+        testStruct();
+
     testStruct();
     testArray();
     testExpressions();
