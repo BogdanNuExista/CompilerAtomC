@@ -71,10 +71,15 @@ bool varDef(){
             }
             tkerr("missing ; after variable declaration");
         }
-        
-        // pentru ca structDef sa fie corect, ne intoarcem la inceputul lui varDef
-        iTk = start;
-        return false;
+        else{
+            if(iTk->code == LBRACKET) {
+                tkerr("missing identifier before array declaration");
+            }
+
+            // pentru ca structDef sa fie corect, ne intoarcem la inceputul lui varDef
+            iTk = start;
+            return false;
+        }
     }
     return false;
 }
@@ -100,6 +105,17 @@ bool structDef(){
             } 
             // Daca nu are LACC poate fi doar declarare
             else {
+
+                Token *lookAhead = iTk;
+                
+                // Verificam daca e un ID sau un tip de date, daca nu e atunci e o struct
+                if(lookAhead->code == TYPE_INT || 
+                   lookAhead->code == TYPE_DOUBLE || 
+                   lookAhead->code == TYPE_CHAR ||
+                   lookAhead->code == STRUCT) {
+                    tkerr("missing { from struct definition");
+                }
+
                 iTk = start;
                 return false;
             }
