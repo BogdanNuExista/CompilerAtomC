@@ -397,7 +397,7 @@ bool exprPrimary(){
             if(consume(RPAR)){
                 return true;
             }
-            tkerr("missing )");
+            tkerr("missing ) in function call");
         }
         return true;
     }
@@ -409,7 +409,7 @@ bool exprPrimary(){
             if(consume(RPAR)){
                 return true;
             }
-            tkerr("missing )");
+            tkerr("missing ) in expression");
         }
         tkerr("invalid expression after (");
     }
@@ -434,7 +434,7 @@ bool stmCompound(){
         if(consume(RACC)){
             return true;
         }
-        tkerr("missing }");
+        tkerr("missing } in compound statement");
     }
     return false;
 }
@@ -543,28 +543,50 @@ bool fnDef(){
                     tkerr("missing function body");
                 }
                 tkerr("missing )");
+            } else {
+                // verificam daca ar fi o declarare de variabila
+                if(iTk->code == LBRACKET) {
+                    // This is likely a variable definition
+                    iTk = start;
+                    return false;
+                }
+                tkerr("missing ( after function name");
             }
-            // Restore position - this might be a variable definition
-            iTk = start;
+        } else {
+            tkerr("missing function name");
         }
-        // Restore position - this might be a variable definition
+        // Restore position if we couldn't match a function definition
         iTk = start;
     }
     return false;
 }
 
 // unit: ( structDef | fnDef | varDef )* END
+// unit: ( structDef | fnDef | varDef )* END
 bool unit(){
     for(;;){
         if(structDef()){}
         else if(fnDef()){}
         else if(varDef()){}
-        else break;
+        else {
+            // daca nu suntem la final afisam un mesaj de eroare in functie de tipul tokenului
+            if(iTk->code != END) {
+                if(iTk->code == STRUCT) {
+                    tkerr("invalid struct definition or declaration");
+                } else if(iTk->code == TYPE_INT || iTk->code == TYPE_DOUBLE ||
+                         iTk->code == TYPE_CHAR || iTk->code == VOID) {
+                    tkerr("invalid variable or function definition");
+                } else {
+                    tkerr("unexpected token in global scope");
+                }
+            }
+            break;
+        }
     }
     if(consume(END)){
         return true;
     }
-    tkerr("syntax error at the end of file");
+    tkerr("unexpected token at end of file");
     return false;
 }
 
