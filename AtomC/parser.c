@@ -529,7 +529,7 @@ bool fnDef(){
                             if(fnParam()){
                                 // continue loop
                             }else{
-                                tkerr("invalid function parameter after ,");
+                                tkerr("missing or invalid parameter after ,");
                             }
                         }else{
                             break;
