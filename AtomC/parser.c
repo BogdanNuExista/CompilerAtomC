@@ -518,6 +518,7 @@ bool fnParam(){
 }
 
 // fnDef: ( typeBase | VOID ) ID LPAR ( fnParam ( COMMA fnParam )* )? RPAR stmCompound
+// fnDef: ( typeBase | VOID ) ID LPAR ( fnParam ( COMMA fnParam )* )? RPAR stmCompound
 bool fnDef(){
     Token *start = iTk;
     if(typeBase() || consume(VOID)){
@@ -529,7 +530,7 @@ bool fnDef(){
                             if(fnParam()){
                                 // continue loop
                             }else{
-                                tkerr("missing or invalid parameter after ,");
+                                tkerr("invalid parameter after ,");
                             }
                         }else{
                             break;
@@ -544,16 +545,11 @@ bool fnDef(){
                 }
                 tkerr("missing )");
             } else {
-                // verificam daca ar fi o declarare de variabila
-                if(iTk->code == LBRACKET) {
-                    // This is likely a variable definition
-                    iTk = start;
-                    return false;
-                }
-                tkerr("missing ( after function name");
+                // If next token is SEMICOLON or LBRACKET, this is a variable definition
+                // not a function definition, so we restore the position
+                iTk = start;
+                return false;
             }
-        } else {
-            tkerr("missing function name");
         }
         // Restore position if we couldn't match a function definition
         iTk = start;
