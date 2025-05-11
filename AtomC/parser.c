@@ -2,11 +2,15 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include "parser.h"
+#include "ad.h"
+#include "utils.h"  // Added for safeAlloc
 
 Token *iTk;        // the iterator in the tokens list
 Token *consumedTk; // the last consumed token
+Symbol *owner = NULL; // current owner symbol (struct or fn)
 
 void tkerr(const char *fmt,...){
     fprintf(stderr,"error in line %d: ",iTk->line);
@@ -18,7 +22,7 @@ void tkerr(const char *fmt,...){
     exit(EXIT_FAILURE);
 }
 
-bool consume(int code){ 
+bool consume(int code){
     if(iTk->code==code){
         consumedTk=iTk;
         iTk=iTk->next;
@@ -28,18 +32,34 @@ bool consume(int code){
 }
 
 // typeBase: TYPE_INT | TYPE_DOUBLE | TYPE_CHAR | STRUCT ID
-bool typeBase(){
+bool typeBase(Type *t){
+    t->n = -1; // not an array by default
+    
     if(consume(TYPE_INT)){ 
+        t->tb = TB_INT;
         return true;
     }
     if(consume(TYPE_DOUBLE)){
+        t->tb = TB_DOUBLE;
         return true;
     }
     if(consume(TYPE_CHAR)){
+        t->tb = TB_CHAR;
         return true;
     }
     if(consume(STRUCT)){
         if(consume(ID)){
+            Token *tkName = consumedTk;
+            // Look for struct symbol
+            Symbol *s = findSymbol(tkName->text);
+            if(!s) {
+                tkerr("structura nedefinita: %s", tkName->text);
+            }
+            if(s->kind != SK_STRUCT) {
+                tkerr("%s is not a struct", tkName->text);
+            }
+            t->tb = TB_STRUCT;
+            t->s = s;
             return true;
         }
         tkerr("missing struct identifier");
@@ -48,9 +68,14 @@ bool typeBase(){
 }
 
 // arrayDecl: LBRACKET INT? RBRACKET
-bool arrayDecl(){
+bool arrayDecl(Type *t){
     if(consume(LBRACKET)){
-        consume(INT); // INT is optional
+        if(consume(INT)) {
+            t->n = consumedTk->i; // Set array size
+        } else {
+            t->n = 0; // Array without specified size
+        }
+        
         if(consume(RBRACKET)){
             return true;
         }
@@ -62,63 +87,105 @@ bool arrayDecl(){
 // varDef: typeBase ID arrayDecl? SEMICOLON
 bool varDef(){
     Token *start = iTk;
+    Type t;
     
-    if(typeBase()){
+    if(typeBase(&t)){
+        Token *tkName;
         if(consume(ID)){
-            arrayDecl(); // optional
+            tkName = consumedTk;
+            
+            if(arrayDecl(&t)) {
+                if(t.n == 0) tkerr("a vector variable must have a specified dimension");
+            }
+            
             if(consume(SEMICOLON)){
+                // Check for symbol redefinition
+                Symbol *var = findSymbolInDomain(symTable, tkName->text);
+                if(var) tkerr("symbol redefinition: %s", tkName->text);
+                
+                // Create new symbol
+                var = newSymbol(tkName->text, SK_VAR);
+                var->type = t;
+                var->owner = owner;
+                addSymbolToDomain(symTable, var);
+                
+                // Handle based on owner
+                if(owner){
+                    switch(owner->kind){
+                    case SK_FN:
+                        var->varIdx = symbolsLen(owner->fn.locals);
+                        addSymbolToList(&owner->fn.locals, dupSymbol(var));
+                        break;
+                    case SK_STRUCT:
+                        var->varIdx = typeSize(&owner->type);
+                        addSymbolToList(&owner->structMembers, dupSymbol(var));
+                        break;
+                    case SK_VAR:  // Added to prevent warning
+                    case SK_PARAM: // Added to prevent warning
+                        // These cases shouldn't occur as owner
+                        tkerr("invalid owner kind for variable %s", tkName->text);
+                        break;
+                    }
+                } else {
+                    var->varMem = safeAlloc(typeSize(&t));
+                }
+                
                 return true;
             }
             tkerr("missing ; after variable declaration");
         }
-        else{
-            if(iTk->code == LBRACKET) {
-                tkerr("missing identifier before array declaration");
-            }
-
-            // pentru ca structDef sa fie corect, ne intoarcem la inceputul lui varDef
-            iTk = start;
-            return false;
-        }
+        // Restore position for other rules
+        iTk = start;
+        return false;
     }
     return false;
 }
 
 // structDef: STRUCT ID LACC varDef* RACC SEMICOLON
 bool structDef(){
-    Token *start = iTk; 
+    Token *start = iTk;
+    Token *tkName;
+    Symbol *oldOwner;
     
     if(consume(STRUCT)){
         if(consume(ID)){
-            // Check if this is a struct definition (with LACC)
+            tkName = consumedTk;
             if(consume(LACC)){
+                // Check for struct redefinition
+                Symbol *s = findSymbolInDomain(symTable, tkName->text);
+                if(s) tkerr("symbol redefinition: %s", tkName->text);
+                
+                // Create struct symbol
+                s = newSymbol(tkName->text, SK_STRUCT);
+                s->type.tb = TB_STRUCT;
+                s->type.s = s;
+                s->type.n = -1;
+                addSymbolToDomain(symTable, s);
+                
+                // Save previous owner and set new owner
+                oldOwner = owner;
+                owner = s;
+                pushDomain();
+                
+                // Parse struct members
                 for(;;){
                     if(!varDef()) break;
                 }
+                
                 if(consume(RACC)){
                     if(consume(SEMICOLON)){
+                        // Restore owner and drop domain
+                        owner = oldOwner;
+                        dropDomain();
                         return true;
                     }
                     tkerr("missing ; after struct definition");
                 }
                 tkerr("missing } after struct body");
             } 
-            // Daca nu are LACC poate fi doar declarare
-            else {
-
-                Token *lookAhead = iTk;
-                
-                // Verificam daca e un ID sau un tip de date, daca nu e atunci e o struct
-                if(lookAhead->code == TYPE_INT || 
-                   lookAhead->code == TYPE_DOUBLE || 
-                   lookAhead->code == TYPE_CHAR ||
-                   lookAhead->code == STRUCT) {
-                    tkerr("missing { from struct definition");
-                }
-
-                iTk = start;
-                return false;
-            }
+            // Not a struct definition
+            iTk = start;
+            return false;
         }
         tkerr("missing struct identifier");
     }
@@ -127,21 +194,19 @@ bool structDef(){
 
 // exprPrimary: ID ( LPAR ( expr ( COMMA expr )* )? RPAR )?
 //            | INT | DOUBLE | CHAR | STRING | LPAR expr RPAR
-
 bool exprPrimary();
-
 bool expr(); 
 
 // exprPostfix: exprPostfix LBRACKET expr RBRACKET
 //           | exprPostfix DOT ID
 //           | exprPrimary
-bool exprPostfix(){ // ex: acces la elemente de array sau struct
+bool exprPostfix(){
     if(exprPrimary()){
         for(;;){
             if(consume(LBRACKET)){
                 if(expr()){
                     if(consume(RBRACKET)){
-                        // continue loop - it's a recursive rule
+                        // continue loop
                     }else{
                         tkerr("missing ]");
                     }
@@ -150,7 +215,7 @@ bool exprPostfix(){ // ex: acces la elemente de array sau struct
                 }
             }else if(consume(DOT)){
                 if(consume(ID)){
-                    // continue loop - it's a recursive rule
+                    // continue loop
                 }else{
                     tkerr("missing identifier after .");
                 }
@@ -181,8 +246,9 @@ bool exprUnary(){
 bool exprCast(){
     if(consume(LPAR)){
         Token *start = iTk;
-        if(typeBase()){
-            arrayDecl(); // optional
+        Type t;
+        if(typeBase(&t)){
+            arrayDecl(&t); // optional
             if(consume(RPAR)){
                 if(exprCast()){
                     return true;
@@ -191,7 +257,7 @@ bool exprCast(){
             }
             tkerr("missing )");
         }else{
-            // Restore token position - this is not a cast but an expression in parentheses
+            // Restore position - not a cast
             iTk = start;
         }
     }
@@ -201,7 +267,7 @@ bool exprCast(){
     return false;
 }
 
-// forward declarations for expression handling
+// Forward declarations for expression handling
 bool exprMul();
 bool exprAdd();
 bool exprRel();
@@ -216,7 +282,7 @@ bool exprMul(){
         for(;;){
             if(consume(MUL) || consume(DIV)){
                 if(exprCast()){
-                    // continue the loop - it's a recursive rule
+                    // continue loop
                 }else{
                     tkerr("invalid multiplication expression");
                 }
@@ -235,7 +301,7 @@ bool exprAdd(){
         for(;;){
             if(consume(ADD) || consume(SUB)){
                 if(exprMul()){
-                    // continue the loop - it's a recursive rule
+                    // continue loop
                 }else{
                     tkerr("invalid addition expression");
                 }
@@ -252,29 +318,11 @@ bool exprAdd(){
 bool exprRel(){
     if(exprAdd()){
         for(;;){
-            if(consume(LESS)){
+            if(consume(LESS) || consume(LESSEQ) || consume(GREATER) || consume(GREATEREQ)){
                 if(exprAdd()){
-                    // continue the loop
+                    // continue loop
                 }else{
-                    tkerr("invalid relational expression after '<'");
-                }
-            }else if(consume(LESSEQ)){
-                if(exprAdd()){
-                    // continue the loop
-                }else{
-                    tkerr("invalid relational expression after '<='");
-                }
-            }else if(consume(GREATER)){
-                if(exprAdd()){
-                    // continue the loop
-                }else{
-                    tkerr("invalid relational expression after '>'");
-                }
-            }else if(consume(GREATEREQ)){
-                if(exprAdd()){
-                    // continue the loop
-                }else{
-                    tkerr("invalid relational expression after '>='");
+                    tkerr("invalid relational expression");
                 }
             }else{
                 break;
@@ -289,17 +337,11 @@ bool exprRel(){
 bool exprEq(){
     if(exprRel()){
         for(;;){
-            if(consume(EQUAL)){
+            if(consume(EQUAL) || consume(NOTEQ)){
                 if(exprRel()){
-                    // continue the loop - it's a recursive rule
+                    // continue loop
                 }else{
-                    tkerr("invalid equality expression after '=='");
-                }
-            }else if(consume(NOTEQ)){
-                if(exprRel()){
-                    // continue the loop - it's a recursive rule
-                }else{
-                    tkerr("invalid equality expression after '!='");
+                    tkerr("invalid equality expression");
                 }
             }else{
                 break;
@@ -316,7 +358,7 @@ bool exprAnd(){
         for(;;){
             if(consume(AND)){
                 if(exprEq()){
-                    // continue the loop - it's a recursive rule
+                    // continue loop
                 }else{
                     tkerr("invalid AND expression");
                 }
@@ -335,7 +377,7 @@ bool exprOr(){
         for(;;){
             if(consume(OR)){
                 if(exprAnd()){
-                    // continue the loop - it's a recursive rule
+                    // continue loop
                 }else{
                     tkerr("invalid OR expression");
                 }
@@ -358,7 +400,7 @@ bool exprAssign(){
             }
             tkerr("invalid assignment expression");
         }else{
-            // If not an assignment, restore position and try exprOr
+            // Not an assignment, restore position
             iTk = startTk;
         }
     }
@@ -385,7 +427,7 @@ bool exprPrimary(){
                 for(;;){
                     if(consume(COMMA)){
                         if(expr()){
-                            // continue the loop
+                            // continue loop
                         }else{
                             tkerr("invalid expression after ,");
                         }
@@ -416,22 +458,22 @@ bool exprPrimary(){
     return false;
 }
 
-// stm: stmCompound
-//    | IF LPAR expr RPAR stm ( ELSE stm )?
-//    | WHILE LPAR expr RPAR stm
-//    | RETURN expr? SEMICOLON
-//    | expr? SEMICOLON
+// Forward declaration
 bool stm();
 
 // stmCompound: LACC ( varDef | stm )* RACC
-bool stmCompound(){
+bool stmCompound(bool newDomain){
     if(consume(LACC)){
+        if(newDomain) pushDomain();
+        
         for(;;){
             if(varDef()){}
             else if(stm()){}
             else break;
         }
+        
         if(consume(RACC)){
+            if(newDomain) dropDomain();
             return true;
         }
         tkerr("missing } in compound statement");
@@ -445,7 +487,7 @@ bool stmCompound(){
 //    | RETURN expr? SEMICOLON
 //    | expr? SEMICOLON
 bool stm(){
-    if(stmCompound()){
+    if(stmCompound(true)){
         return true;
     }
     if(consume(IF)){
@@ -493,12 +535,11 @@ bool stm(){
     }
     Token *start = iTk;
     if(expr()){ // optional
-        // Expression is present, must end with semicolon
+        // Expression found
     }
     if(consume(SEMICOLON)){
         return true;
     }
-    // If we tried to parse an expression but didn't find a semicolon, give an error
     if(iTk != start){
         tkerr("missing ;");
     }
@@ -507,9 +548,31 @@ bool stm(){
 
 // fnParam: typeBase ID arrayDecl?
 bool fnParam(){
-    if(typeBase()){
+    Type t;
+    Token *tkName;
+    
+    if(typeBase(&t)){
         if(consume(ID)){
-            arrayDecl(); // optional
+            tkName = consumedTk;
+            
+            if(arrayDecl(&t)) {
+                t.n = 0; // Reset dimension for array parameters
+            }
+            
+            // Check for parameter redefinition
+            Symbol *param = findSymbolInDomain(symTable, tkName->text);
+            if(param) tkerr("symbol redefinition: %s", tkName->text);
+            
+            // Create parameter symbol
+            param = newSymbol(tkName->text, SK_PARAM);
+            param->type = t;
+            param->owner = owner;
+            param->paramIdx = symbolsLen(owner->fn.params);
+            
+            // Add parameter to domain and function
+            addSymbolToDomain(symTable, param);
+            addSymbolToList(&owner->fn.params, dupSymbol(param));
+            
             return true;
         }
         tkerr("missing parameter identifier");
@@ -518,12 +581,30 @@ bool fnParam(){
 }
 
 // fnDef: ( typeBase | VOID ) ID LPAR ( fnParam ( COMMA fnParam )* )? RPAR stmCompound
-// fnDef: ( typeBase | VOID ) ID LPAR ( fnParam ( COMMA fnParam )* )? RPAR stmCompound
 bool fnDef(){
     Token *start = iTk;
-    if(typeBase() || consume(VOID)){
+    Type t;
+    Token *tkName;
+    
+    if(typeBase(&t) || (consume(VOID) && (t.tb = TB_VOID, true))){
         if(consume(ID)){
+            tkName = consumedTk;
+            
             if(consume(LPAR)){
+                // Check for function redefinition
+                Symbol *fn = findSymbolInDomain(symTable, tkName->text);
+                if(fn) tkerr("symbol redefinition: %s", tkName->text);
+                
+                // Create function symbol
+                fn = newSymbol(tkName->text, SK_FN);
+                fn->type = t;
+                addSymbolToDomain(symTable, fn);
+                
+                // Set owner and create function domain
+                owner = fn;
+                pushDomain();
+                
+                // Parse parameters
                 if(fnParam()){
                     for(;;){
                         if(consume(COMMA)){
@@ -537,47 +618,36 @@ bool fnDef(){
                         }
                     }
                 }
+                
                 if(consume(RPAR)){
-                    if(stmCompound()){
+                    if(stmCompound(false)){ // Don't create a new domain
+                        // Cleanup after function
+                        dropDomain();
+                        owner = NULL;
                         return true;
                     }
                     tkerr("missing function body");
                 }
                 tkerr("missing )");
             } else {
-                // If next token is SEMICOLON or LBRACKET, this is a variable definition
-                // not a function definition, so we restore the position
+                // Not a function, restore position
                 iTk = start;
                 return false;
             }
         }
-        // Restore position if we couldn't match a function definition
+        // Restore position
         iTk = start;
     }
     return false;
 }
 
 // unit: ( structDef | fnDef | varDef )* END
-// unit: ( structDef | fnDef | varDef )* END
 bool unit(){
     for(;;){
         if(structDef()){}
         else if(fnDef()){}
         else if(varDef()){}
-        else {
-            // daca nu suntem la final afisam un mesaj de eroare in functie de tipul tokenului
-            if(iTk->code != END) {
-                if(iTk->code == STRUCT) {
-                    tkerr("invalid struct definition or declaration");
-                } else if(iTk->code == TYPE_INT || iTk->code == TYPE_DOUBLE ||
-                         iTk->code == TYPE_CHAR || iTk->code == VOID) {
-                    tkerr("invalid variable or function definition");
-                } else {
-                    tkerr("unexpected token in global scope");
-                }
-            }
-            break;
-        }
+        else break;
     }
     if(consume(END)){
         return true;
@@ -587,6 +657,13 @@ bool unit(){
 }
 
 void parse(Token *tokens){
-    iTk=tokens;
-    if(!unit())tkerr("syntax error");
+    // Initialize domain analysis
+    pushDomain(); // Global domain
+    owner = NULL;
+    
+    iTk = tokens;
+    if(!unit()) tkerr("syntax error");
+    
+    // Display symbol table (optional)
+    // showDomain(symTable, "global");
 }

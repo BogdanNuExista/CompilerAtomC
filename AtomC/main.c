@@ -11,16 +11,30 @@ int main(int argc, char **argv) {
         printf("Usage: %s <input_file>\n", argv[0]);
         return 1;
     }
+    
+    // Initialize domain analysis first
+    pushDomain(); // Create global domain
+    
+    // Then initialize virtual machine
+    vmInit();
+
+    printf("virtual machine initialized\n");
     char *src = loadFile(argv[1]); // Load the input file
     Token *tokens = tokenize(src); // Generate tokens
 
-    showTokens(tokens);
+    // Optional: display tokens
+    //showTokens(tokens);
     
-    parse(tokens); // Parse the tokens
+    // Parse and perform domain analysis
+    // Use the parser API properly
+    parse(tokens);
     
-    printf("Input is syntactically correct\n");
+    // Display symbol table
+    showDomain(symTable, "global");
+    
+    printf("Input is syntactically and semantically correct\n");
 
     free(src); // Free allocated memory
-
+    
     return 0;
 }
