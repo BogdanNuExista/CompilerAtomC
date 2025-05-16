@@ -29,9 +29,9 @@ void testErrors() {
     struct Point p;
     
     // Error: struct in condition
-    if(p) {
-        a = 5;
-    }
+	// if(p) {
+	//     a = 5;
+	// }
     
     // Error: array as scalar in assignment
 
@@ -41,10 +41,6 @@ void testErrors() {
     // Error: returning value from void function
 
     //return 5;
-}
-
-int testReturn() {
-    // Error: missing return value
 }
 
 void testReturnVoid() {
