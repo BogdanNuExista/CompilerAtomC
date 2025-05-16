@@ -6,11 +6,11 @@ CFLAGS = -Wall
 OUTPUT = p
 
 # Source files
-SRC = main.c lexer.c utils.c parser.c ad.c vm.c
+SRC = main.c lexer.c utils.c parser.c ad.c vm.c at.c
 
 # Default target
 all: $(OUTPUT)
-	$(OUTPUT).exe .\tests\testad.c
+	$(OUTPUT).exe .\tests\testat.c
 
 # Build the executable
 $(OUTPUT): $(SRC)
