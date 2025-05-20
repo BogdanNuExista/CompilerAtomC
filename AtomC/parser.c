@@ -286,6 +286,7 @@ bool exprUnary(Ret *r){
 }
 
 // exprCast: LPAR typeBase arrayDecl? RPAR exprCast | exprUnary
+// exprCast: LPAR typeBase arrayDecl? RPAR exprCast | exprUnary
 bool exprCast(Ret *r){
     if(consume(LPAR)){
         Token *start = iTk;
@@ -296,12 +297,20 @@ bool exprCast(Ret *r){
             
             if(consume(RPAR)){
                 Ret op;
-                if(exprCast(&op)){
-                    // Type validation for cast
-                    if(t.tb == TB_STRUCT) {
+                // CHANGE THIS LINE: Use exprUnary instead of recursive exprCast call
+                if(exprUnary(&op)){
+                    // Allow struct-to-struct casts of the same type
+                    if(t.tb == TB_STRUCT && op.type.tb == TB_STRUCT) {
+                        if(t.s != op.type.s) {
+                            tkerr("cannot cast between different struct types");
+                        }
+                        // Same struct type cast is allowed - don't report an error here
+                    } 
+                    // Don't allow casting between struct and non-struct
+                    else if(t.tb == TB_STRUCT) {
                         tkerr("cannot convert to a struct type");
                     }
-                    if(op.type.tb == TB_STRUCT) {
+                    else if(op.type.tb == TB_STRUCT) {
                         tkerr("cannot convert a struct");
                     }
                     
@@ -316,7 +325,7 @@ bool exprCast(Ret *r){
                     *r = (Ret){t, false, true};
                     return true;
                 }
-                tkerr("invalid cast expression");
+                tkerr("invalid expression after cast");
             }
             tkerr("missing )");
         }else{
@@ -643,6 +652,52 @@ bool exprPrimary(Ret *r){
     }
     
     if(consume(LPAR)){
+        // First, check if this could be a cast by peeking ahead
+        Token *savedTk = iTk;
+        
+        // Try to parse as a type
+        Type t;
+        //bool isCast = false;
+        
+        if(typeBase(&t)){
+            arrayDecl(&t); // optional
+            if(consume(RPAR)){
+                // It's a cast expression
+                Ret op;
+                if(exprUnary(&op)){
+                    // Handle the cast
+                    // Allow struct-to-struct casts of the same type
+                    if(t.tb == TB_STRUCT && op.type.tb == TB_STRUCT) {
+                        if(t.s != op.type.s) {
+                            tkerr("cannot cast between different struct types");
+                        }
+                        // Same struct type cast is allowed
+                    } 
+                    else if(t.tb == TB_STRUCT) {
+                        tkerr("cannot convert to a struct type");
+                    }
+                    else if(op.type.tb == TB_STRUCT) {
+                        tkerr("cannot convert a struct");
+                    }
+                    
+                    // Array conversion validation
+                    if(op.type.n >= 0 && t.n < 0) {
+                        tkerr("an array can be converted only to another array");
+                    }
+                    if(op.type.n < 0 && t.n >= 0) {
+                        tkerr("a scalar can be converted only to another scalar");
+                    }
+                    
+                    *r = (Ret){t, false, true};
+                    return true;
+                }
+                tkerr("invalid expression after cast");
+            }
+        }
+        
+        // Restore position - not a cast, try as normal parenthesized expression
+        iTk = savedTk;
+        
         if(expr(r)){
             if(consume(RPAR)){
                 return true;
